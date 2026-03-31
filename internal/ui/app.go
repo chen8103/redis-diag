@@ -351,7 +351,8 @@ func (a *App) renderClients() string {
 		} else {
 			fmt.Fprintf(&b, "  [yellow]Clients:[-]\n")
 			for _, row := range snapshot.Rows {
-				fmt.Fprintf(&b, "    id=%-6s addr=%-22s idle=%-6d age=%-6d cmd=%-12s omem=%d\n", row.ID, row.Addr, row.Idle, row.Age, row.Cmd, row.OMem)
+				color := commandRiskColor(row.Cmd)
+				fmt.Fprintf(&b, "    id=%-6s addr=%-22s idle=%-6d age=%-6d cmd=%s%-12s[-] omem=%d\n", row.ID, row.Addr, row.Idle, row.Age, color, row.Cmd, row.OMem)
 			}
 		}
 		b.WriteString("\n")

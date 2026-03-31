@@ -114,9 +114,19 @@ make build
 
 1. **Clients 视图**（默认）：显示每个客户端的详细信息
    - ID、地址、idle 时间、age、当前执行的命令、输出缓冲区内存
+   - 命令列根据风险级别显示颜色（见下方说明）
 
 2. **IP 视图**：按 IP 汇总连接数统计
    - 显示每个 IP 的连接数量，按数量降序排列
+
+**命令风险颜色**（Clients 视图和 Commands 面板通用）：
+
+| 颜色 | 风险等级 | 命令 |
+|------|---------|------|
+| 🔴 红色 | 极高（必避） | `keys`, `flushall`, `flushdb` |
+| 🟠 橙色 | 高/中（慎用） | `sort`, `hgetall`, `smembers`, `sunion`, `sinter`, `sdiff`, `lrange`, `getrange`, `substr` |
+| 🟡 黄色 | 低（有替代） | `scan` |
+| 🟢 绿色 | 正常 | 其他命令 |
 
 **显示内容**：
 
@@ -126,7 +136,8 @@ sort=idle filter="" view=clients
   connected=5 shown=5 limited=false quality=exact
 
   Clients:
-    id=1     addr=10.0.0.1:5000    idle=3     age=10     cmd=get       omem=0
+    id=1     addr=10.0.0.1:5000    idle=3     age=10     cmd=keys        omem=0
+    id=2     addr=10.0.0.1:5001    idle=0     age=5      cmd=sort        omem=1024
     ...
 
   IP Overview:
@@ -229,7 +240,25 @@ quality=sampled sampled=200 topk=20 budget=1.5s
 
 显示命令统计和增量 QPS。
 
+**风险颜色**：
+
+| 颜色 | 风险等级 | 命令 |
+|------|---------|------|
+| 🔴 红色 | 极高（必避） | `keys`, `flushall`, `flushdb` |
+| 🟠 橙色 | 高/中（慎用） | `sort`, `hgetall`, `smembers`, `sunion`, `sinter`, `sdiff`, `lrange`, `getrange`, `substr` |
+| 🟡 黄色 | 低（有替代） | `scan` |
+| 🟢 绿色 | 正常 | 其他命令 |
+
 **显示内容**：
+
+```
+🔴 Critical   🟠 Medium   🟡 Low
+
+  🔴keys              calls=5        qps=0.00      usec/call=1234.56
+  🟠sort              calls=10       qps=0.00      usec/call=567.89
+  🟡scan              calls=100      qps=5.00      usec/call=12.34
+  get                 calls=10000    qps=500.00    usec/call=2.50
+```
 
 - 每条命令的累计调用次数、总耗时、平均耗时
 - 增量 QPS（两次采样间隔内的平均每秒调用数）
