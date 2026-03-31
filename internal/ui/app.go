@@ -270,6 +270,7 @@ func (a *App) renderCommands() string {
 		return "Connecting..."
 	}
 	var b strings.Builder
+	b.WriteString("[red]🔴[-] Critical   [orange]🟠[-] Medium   [yellow]🟡[-] Low\n\n")
 	for _, node := range nodes {
 		snapshot, ok := a.store.Commands(node.NodeID)
 		fmt.Fprintf(&b, "[yellow]%s[-]\n", node.Addr)
@@ -289,11 +290,25 @@ func (a *App) renderCommands() string {
 			rows = slices.Clone(rows[:10])
 		}
 		for _, row := range rows {
-			fmt.Fprintf(&b, "  %-16s calls=%-8d qps=%-8.2f usec/call=%.2f\n", row.Command, row.CallsTotal, row.QPSDelta, row.UsecPerCall)
+			color := commandRiskColor(row.Command)
+			fmt.Fprintf(&b, "  %s%-16s[-] calls=%-8d qps=%-8.2f usec/call=%.2f\n", color, row.Command, row.CallsTotal, row.QPSDelta, row.UsecPerCall)
 		}
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+func commandRiskColor(cmd string) string {
+	switch {
+	case cmd == "keys" || cmd == "flushall" || cmd == "flushdb":
+		return "[red]"
+	case cmd == "sort" || cmd == "hgetall" || cmd == "smembers" || cmd == "sunion" || cmd == "sinter" || cmd == "sdiff" || cmd == "lrange" || cmd == "getrange" || cmd == "substr":
+		return "[orange]"
+	case cmd == "scan":
+		return "[yellow]"
+	default:
+		return "[green]"
+	}
 }
 
 func (a *App) renderClients() string {
