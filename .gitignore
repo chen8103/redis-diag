@@ -4,6 +4,7 @@
 /redis-top
 /redis-top-nocgo
 /redis-top-amd64
+/bin/*
 *.exe
 *.exe~
 *.dll
