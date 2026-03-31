@@ -1,0 +1,22 @@
+.DS_Store
+
+# Build outputs
+/redis-top
+/redis-top-nocgo
+/redis-top-amd64
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go caches
+.gocache/
+.gomodcache/
+
+# IDE/temp files
+*.swp
+*.swo
+
