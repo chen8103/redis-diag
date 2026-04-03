@@ -320,13 +320,13 @@ window_reads=100 window_writes=50
 - **单机主从模式**：通过 `INFO replication` 中的 `connected_slaves` 和 `slave*` 字段获取 replica 列表
 
 ```
- ● 10.71.59.109:7974 [master][1]
- ├── ○ 10.77.47.48:7974 [replica][2]
- │       state=online lag=1
- ├── ○ 10.71.58.75:7974 [replica][3]
- │       state=online lag=1
- └── ○ 10.71.57.6:7974 [replica][4]
-         state=online lag=1
+● 192.168.1.100:6379 [master][1]
+├── ○ 192.168.1.101:6379 [replica][2]
+│       state=online lag=1
+├── ○ 192.168.1.102:6379 [replica][3]
+│       state=online lag=1
+└── ○ 192.168.1.103:6379 [replica][4]
+        state=online lag=1
 ```
 
 **节点切换**：
