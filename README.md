@@ -6,13 +6,14 @@
 
 | 面板 | 说明 |
 |------|------|
-| Dashboard | 汇总关键 INFO 指标 |
+| Dashboard | 汇总关键 INFO 指标（含 uptime） |
 | Clients | 客户端列表、IP 统计概览、排序、过滤 |
 | Slowlog | latest / new 两种查看模式 |
-| Replication | 主从状态与复制信息 |
+| Replication | 主从状态、复制信息、重连检测 |
 | Keys | 带预算控制的抽样式 Big Keys 分析 |
 | Commands | 命令累计调用量与增量 QPS |
 | Monitor | 独立连接的实时命令流 |
+| Topology | 集群拓扑树视图、节点切换 |
 
 支持单实例和 Cluster 按节点分组展示。
 
@@ -97,7 +98,7 @@ make build
 
 显示 Redis `INFO` 命令返回的关键指标：
 
-- **版本信息**：Redis 版本、运行角色
+- **版本信息**：Redis 版本、运行角色、运行时长（人类可读格式如 `2d3h4m5s`）
 - **客户端统计**：连接客户端数、每秒操作数
 - **内存统计**：使用内存、RSS、命中率
 - **键空间统计**：过期键、驱逐键、各数据库 key 数量
@@ -181,6 +182,7 @@ mode=latest
 
 - 角色（master/replica）
 - 主节点地址、连接状态、最后 IO 间隔
+- **重连时间**：`master_link_down_since_seconds` 从大变小时（>60s → <10s）记录重连事件
 - 复制偏移量
 - 各 replica 节点状态、偏移量、延迟
 
@@ -308,6 +310,35 @@ window_reads=100 window_writes=50
 
 ---
 
+### Topology（面板 8）
+
+以树形结构展示集群拓扑，支持 Redis Cluster 模式和单机主从复制模式。
+
+**显示内容**：
+
+- **Cluster 模式**：通过 `CLUSTER NODES` 获取拓扑，显示 master 及其对应 replica
+- **单机主从模式**：通过 `INFO replication` 中的 `connected_slaves` 和 `slave*` 字段获取 replica 列表
+
+```
+ ● 10.71.59.109:7974 [master][1]
+ ├── ○ 10.77.47.48:7974 [replica][2]
+ │       state=online lag=1
+ ├── ○ 10.71.58.75:7974 [replica][3]
+ │       state=online lag=1
+ └── ○ 10.71.57.6:7974 [replica][4]
+         state=online lag=1
+```
+
+**节点切换**：
+
+1. 按 `1-9` 选择节点（绿色高亮为已选中）
+2. 按 `Enter` 连接到选中的 replica
+3. 按 `M` 重新连接回原始 master
+
+**刷新逻辑**：实时反映集群拓扑变化。
+
+---
+
 ## 操作方法
 
 ### 切换面板
@@ -321,6 +352,7 @@ window_reads=100 window_writes=50
 | `5` | Keys |
 | `6` | Commands |
 | `7` | Monitor |
+| `8` | Topology |
 
 ### Clients 面板操作
 
@@ -341,6 +373,14 @@ window_reads=100 window_writes=50
 | 按键 | 功能 |
 |------|------|
 | `m` | 启动/停止 Monitor |
+
+### Topology 面板操作
+
+| 按键 | 功能 |
+|------|------|
+| `1-9` | 选择节点 |
+| `Enter` | 连接到选中的 replica |
+| `M` | 重新连接回原始 master |
 
 ### 通用操作
 
