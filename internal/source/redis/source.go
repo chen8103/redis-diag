@@ -73,6 +73,38 @@ func New(cfg config.Config) (*Source, error) {
 	}, nil
 }
 
+func (s *Source) SetTarget(addr string) error {
+	s.nodeMu.Lock()
+	defer s.nodeMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.rdb != nil {
+		_ = s.rdb.Close()
+	}
+
+	opts := &goredis.Options{
+		Addr:                  addr,
+		Username:              s.baseOpts.Username,
+		Password:              s.baseOpts.Password,
+		DB:                    s.baseOpts.DB,
+		TLSConfig:             s.baseOpts.TLSConfig,
+		ContextTimeoutEnabled: true,
+	}
+	s.rdb = goredis.NewUniversalClient(&goredis.UniversalOptions{
+		Addrs:    []string{addr},
+		Username: opts.Username,
+		Password: opts.Password,
+		DB:       opts.DB,
+	})
+	s.addr = addr
+	s.lastCommandCalls = make(map[string]map[string]int64)
+	s.lastCommandSample = make(map[string]time.Time)
+	s.slowlogSeen = make(map[string]map[int64]struct{})
+	s.nodeClients = make(map[string]nodeClient)
+	return nil
+}
+
 func (s *Source) Close() error {
 	s.nodeMu.Lock()
 	defer s.nodeMu.Unlock()
@@ -166,6 +198,7 @@ func (s *Source) FetchDashboard(ctx context.Context, node source.NodeRef) (model
 		},
 		Version:                info["redis_version"],
 		Role:                   info["role"],
+		Uptime:                 parseInt64(info["uptime_in_seconds"]),
 		ConnectedClients:       parseInt64(info["connected_clients"]),
 		UsedMemory:             parseUint64(info["used_memory"]),
 		UsedMemoryRSS:          parseUint64(info["used_memory_rss"]),
@@ -293,12 +326,13 @@ func (s *Source) FetchReplication(ctx context.Context, node source.NodeRef) (mod
 			TTL:         s.cfg.Panels.Replication.Interval * 2,
 			Quality:     model.QualityExact,
 		},
-		Role:                   info["role"],
-		MasterHost:             info["master_host"],
-		MasterLinkStatus:       info["master_link_status"],
-		MasterLastIOSecondsAgo: parseInt64(info["master_last_io_seconds_ago"]),
-		ConnectedSlaves:        parseInt64(info["connected_slaves"]),
-		MasterReplOffset:       parseInt64(info["master_repl_offset"]),
+		Role:                       info["role"],
+		MasterHost:                 info["master_host"],
+		MasterLinkStatus:           info["master_link_status"],
+		MasterLastIOSecondsAgo:     parseInt64(info["master_last_io_seconds_ago"]),
+		MasterLinkDownSinceSeconds: parseInt64(info["master_link_down_since_seconds"]),
+		ConnectedSlaves:            parseInt64(info["connected_slaves"]),
+		MasterReplOffset:           parseInt64(info["master_repl_offset"]),
 	}
 
 	for key, value := range info {

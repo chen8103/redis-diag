@@ -43,6 +43,10 @@ func (nilSource) FetchCommandStats(context.Context, source.NodeRef) (model.Comma
 	return model.CommandStatsSnapshot{}, nil
 }
 
+func (nilSource) SetTarget(addr string) error {
+	return nil
+}
+
 func TestInitialRenderDoesNotNeedApplicationRunLoop(t *testing.T) {
 	cfg := config.Default()
 	st := store.New()

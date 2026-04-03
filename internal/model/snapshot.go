@@ -39,6 +39,7 @@ type DashboardSnapshot struct {
 	SnapshotMeta
 	Version                string
 	Role                   string
+	Uptime                 int64
 	ConnectedClients       int64
 	UsedMemory             uint64
 	UsedMemoryRSS          uint64
@@ -96,13 +97,15 @@ type ReplicaState struct {
 
 type ReplicationSnapshot struct {
 	SnapshotMeta
-	Role                   string
-	MasterHost             string
-	MasterLinkStatus       string
-	MasterLastIOSecondsAgo int64
-	ConnectedSlaves        int64
-	Replicas               []ReplicaState
-	MasterReplOffset       int64
+	Role                       string
+	MasterHost                 string
+	MasterLinkStatus           string
+	MasterLastIOSecondsAgo     int64
+	MasterLinkDownSinceSeconds int64
+	LastReconnectedAt          time.Time
+	ConnectedSlaves            int64
+	Replicas                   []ReplicaState
+	MasterReplOffset           int64
 }
 
 type BigKeyRow struct {

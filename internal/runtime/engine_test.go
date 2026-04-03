@@ -42,6 +42,10 @@ func (f fakeSource) FetchCommandStats(ctx context.Context, node source.NodeRef) 
 	return model.CommandStatsSnapshot{SnapshotMeta: model.SnapshotMeta{NodeID: node.NodeID, Quality: model.QualityExact}, WarmingUp: true}, nil
 }
 
+func (f fakeSource) SetTarget(addr string) error {
+	return nil
+}
+
 func TestEngineStartLoadsCoreSnapshots(t *testing.T) {
 	cfg := config.Default()
 	cfg.Panels.Dashboard.Interval = 20 * time.Millisecond

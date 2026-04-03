@@ -37,4 +37,5 @@ type Source interface {
 	FetchReplication(ctx context.Context, node NodeRef) (model.ReplicationSnapshot, error)
 	FetchBigKeys(ctx context.Context, node NodeRef, options BigKeyOptions) (model.BigKeysSnapshot, error)
 	FetchCommandStats(ctx context.Context, node NodeRef) (model.CommandStatsSnapshot, error)
+	SetTarget(addr string) error
 }

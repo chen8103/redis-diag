@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -21,21 +22,24 @@ import (
 )
 
 type App struct {
-	cfg           config.Config
-	engine        *engineruntime.Engine
-	monitor       *monitor.Stream
-	store         *store.Store
-	tui           *tview.Application
-	root          tview.Primitive
-	status        *tview.TextView
-	header        *tview.TextView
-	nav           *tview.TextView
-	body          *tview.TextView
-	selectedPanel int
-	selectedNode  int
-	clientsViewIP bool
-	done          chan struct{}
-	refreshCh     chan struct{}
+	cfg                    config.Config
+	engine                 *engineruntime.Engine
+	monitor                *monitor.Stream
+	store                  *store.Store
+	tui                    *tview.Application
+	root                   tview.Primitive
+	status                 *tview.TextView
+	header                 *tview.TextView
+	nav                    *tview.TextView
+	body                   *tview.TextView
+	selectedPanel          int
+	selectedNode           int
+	clientsViewIP          bool
+	done                   chan struct{}
+	refreshCh              chan struct{}
+	topologySelectedNodeID string
+	nodeDrillDown          bool
+	masterAddr             string
 }
 
 func New(cfg config.Config, engine *engineruntime.Engine, st *store.Store, mon *monitor.Stream) *App {
@@ -61,8 +65,8 @@ func New(cfg config.Config, engine *engineruntime.Engine, st *store.Store, mon *
 	app.status.SetBorder(true)
 
 	app.header.SetText(fmt.Sprintf("Target: %s   Cluster: %t   Refresh: %s", formatTarget(cfg), cfg.Target.Cluster, cfg.Refresh))
-	app.nav.SetText("[yellow][1]Dashboard [2]Clients [3]Slowlog [4]Replication [5]Keys [6]Commands [7]Monitor[-]")
-	app.status.SetText("[green]1/2/3/4/5/6/7[-] Panels   [green]s[-] Sort   [green]f[-] Filter   [green]i[-] IP View   [green]m[-] Mode/Monitor   [green]q[-] Quit")
+	app.nav.SetText("[yellow][1]Dashboard [2]Clients [3]Slowlog [4]Replication [5]Keys [6]Commands [7]Monitor [8]Topology[-]")
+	app.status.SetText("[green]1/2/3/4/5/6/7/8[-] Panels   [green]s[-] Sort   [green]f[-] Filter   [green]i[-] IP View   [green]m[-] Mode/Monitor   [green]q[-] Quit")
 
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(app.header, 1, 0, false).
@@ -80,14 +84,50 @@ func New(cfg config.Config, engine *engineruntime.Engine, st *store.Store, mon *
 				app.tui.Stop()
 				return nil
 			case '1', '2', '3', '4', '5', '6', '7':
-				panel := int(ch - '0')
-				if panel >= 1 && panel <= 7 {
-					app.selectedPanel = panel
+				if app.selectedPanel == 8 {
+					idx := int(ch - '1')
+					displayNodes := app.topologyNodes()
+					if idx >= 0 && idx < len(displayNodes) {
+						app.topologySelectedNodeID = displayNodes[idx].NodeID
+					}
+					app.refresh()
+				} else {
+					panel := int(ch - '0')
+					if panel >= 1 && panel <= 7 {
+						app.selectedPanel = panel
+						app.selectedNode = 0
+						app.nodeDrillDown = false
+						app.refresh()
+					}
+				}
+				return nil
+			case '8':
+				if app.selectedPanel == 8 {
+					idx := int(ch - '1')
+					displayNodes := app.topologyNodes()
+					if idx >= 0 && idx < len(displayNodes) {
+						app.topologySelectedNodeID = displayNodes[idx].NodeID
+					}
+					app.refresh()
+				} else {
+					app.selectedPanel = 8
+					app.topologySelectedNodeID = ""
+					app.refresh()
+				}
+				return nil
+			case '9':
+				if app.selectedPanel == 8 {
+					idx := int(ch - '1')
+					displayNodes := app.topologyNodes()
+					if idx >= 0 && idx < len(displayNodes) {
+						app.topologySelectedNodeID = displayNodes[idx].NodeID
+					}
 					app.refresh()
 				}
 				return nil
 			case '\t':
 				app.cycleNode()
+				app.refresh()
 				return nil
 			case 'r':
 				app.refresh()
@@ -114,9 +154,44 @@ func New(cfg config.Config, engine *engineruntime.Engine, st *store.Store, mon *
 					app.refresh()
 				} else if app.selectedPanel == 7 {
 					app.toggleMonitor()
+				} else if app.masterAddr != "" {
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					_ = app.engine.SetTarget(ctx, app.masterAddr)
+					cancel()
+					app.refresh()
 				}
 				return nil
 			}
+		}
+		if event.Key() == tcell.KeyEnter {
+			if app.selectedPanel == 8 {
+				displayNodes := app.topologyNodes()
+				var selectedNode cluster.NodeState
+				for _, n := range displayNodes {
+					if n.NodeID == app.topologySelectedNodeID {
+						selectedNode = n
+						break
+					}
+				}
+				if selectedNode.Addr != "" && selectedNode.Role == "replica" {
+					if app.masterAddr == "" {
+						nodes := app.engine.Nodes()
+						for _, n := range nodes {
+							if n.Role == "master" || n.Role == "unknown" {
+								app.masterAddr = n.Addr
+								break
+							}
+						}
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					_ = app.engine.SetTarget(ctx, selectedNode.Addr)
+					cancel()
+				}
+				app.nodeDrillDown = false
+				app.selectedPanel = 1
+				app.refresh()
+			}
+			return nil
 		}
 		if event.Key() == tcell.KeyCtrlC {
 			close(app.done)
@@ -196,10 +271,243 @@ func (a *App) renderCurrentView() {
 	case 7:
 		a.body.SetTitle(" Monitor ")
 		a.body.SetText(a.renderMonitor())
+	case 8:
+		a.body.SetTitle(" Topology ")
+		a.body.SetText(a.renderTopology())
 	default:
 		a.body.SetTitle(" Dashboard ")
 		a.body.SetText(a.renderDashboard())
 	}
+}
+
+func formatUptime(seconds int64) string {
+	d := time.Duration(seconds) * time.Second
+	return d.String()
+}
+
+func (a *App) topologyNodes() []cluster.NodeState {
+	nodes := a.engine.Nodes()
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	masters := make([]cluster.NodeState, 0)
+	replicas := make([]cluster.NodeState, 0)
+	for _, node := range nodes {
+		if node.Role == "master" {
+			masters = append(masters, node)
+		} else {
+			replicas = append(replicas, node)
+		}
+	}
+
+	if len(nodes) == 1 {
+		node := nodes[0]
+		role := node.Role
+		if role == "unknown" {
+			role = "standalone"
+		}
+		if role == "standalone" || role == "master" {
+			snapshot, hasReplication := a.store.Replication(node.NodeID)
+			if hasReplication && snapshot.ConnectedSlaves > 0 {
+				result := make([]cluster.NodeState, 0, 1+snapshot.ConnectedSlaves)
+				result = append(result, node)
+				for _, replica := range snapshot.Replicas {
+					replicaNode := cluster.NodeState{
+						NodeID:   replica.Addr,
+						Addr:     replica.Addr,
+						Role:     "replica",
+						MasterID: node.NodeID,
+						Online:   true,
+					}
+					result = append(result, replicaNode)
+				}
+				return result
+			}
+		}
+		return nodes
+	}
+
+	if len(masters) == 1 && len(replicas) == 0 {
+		snapshot, hasReplication := a.store.Replication(masters[0].NodeID)
+		if hasReplication && snapshot.ConnectedSlaves > 0 {
+			result := make([]cluster.NodeState, 0, 1+snapshot.ConnectedSlaves)
+			result = append(result, masters[0])
+			for _, replica := range snapshot.Replicas {
+				replicaNode := cluster.NodeState{
+					NodeID:   replica.Addr,
+					Addr:     replica.Addr,
+					Role:     "replica",
+					MasterID: masters[0].NodeID,
+					Online:   true,
+				}
+				result = append(result, replicaNode)
+			}
+			return result
+		}
+	}
+
+	if len(masters) == 0 && len(replicas) > 0 {
+		masters = append(masters, replicas[0])
+		replicas = replicas[1:]
+	}
+
+	result := make([]cluster.NodeState, 0, len(nodes))
+	for _, master := range masters {
+		result = append(result, master)
+	}
+	for _, replica := range replicas {
+		if len(masters) > 0 && masters[0].NodeID != "" {
+			if replica.MasterID == masters[0].NodeID {
+				result = append(result, replica)
+			}
+		}
+	}
+	return result
+}
+
+func (a *App) renderTopology() string {
+	nodes := a.engine.Nodes()
+	if len(nodes) == 0 {
+		return "Connecting..."
+	}
+
+	var b strings.Builder
+
+	masters := make([]cluster.NodeState, 0)
+	replicas := make([]cluster.NodeState, 0)
+	for _, node := range nodes {
+		if node.Role == "master" {
+			masters = append(masters, node)
+		} else {
+			replicas = append(replicas, node)
+		}
+	}
+
+	if len(nodes) == 1 || (len(masters) == 1 && len(replicas) == 0) {
+		node := nodes[0]
+		addr := node.Addr
+		role := node.Role
+		if role == "unknown" {
+			role = "standalone"
+		}
+
+		snapshot, hasReplication := a.store.Replication(node.NodeID)
+		if hasReplication && snapshot.ConnectedSlaves > 0 && role != "replica" {
+			displayNodes := a.topologyNodes()
+			selectedIdx := -1
+			for i, n := range displayNodes {
+				if n.NodeID == a.topologySelectedNodeID {
+					selectedIdx = i
+					break
+				}
+			}
+			selected := selectedIdx == 0
+			color := "[yellow]"
+			if selected {
+				color = "[green]"
+			}
+			fmt.Fprintf(&b, "\n %s●[-] %s [master][1]\n", color, addr)
+			if selected {
+				b.WriteString("  [dim]← selected[-]\n")
+			}
+
+			for ri, replica := range snapshot.Replicas {
+				ridx := ri + 1
+				selected := selectedIdx == ridx
+				color := "[yellow]"
+				if selected {
+					color = "[green]"
+				}
+
+				connector := "├── "
+				if ri == len(snapshot.Replicas)-1 {
+					connector = "└── "
+				}
+				fmt.Fprintf(&b, "%s %s○[-] %s [replica][%d]\n", connector, color, replica.Addr, ridx+1)
+				if replica.State != "" {
+					fmt.Fprintf(&b, "%s       state=%s lag=%d\n", connector, replica.State, replica.Lag)
+				}
+				if selected {
+					b.WriteString("       [dim]← selected[-]\n")
+				}
+			}
+			b.WriteString("\n[dim]Press [1-9] to select, Enter to view details[-]")
+			return b.String()
+		}
+
+		fmt.Fprintf(&b, "\n Standalone mode - no cluster topology\n\n")
+		fmt.Fprintf(&b, " [yellow]●[-] %s [%s][1]\n", addr, role)
+		fmt.Fprintf(&b, "\n[dim]Press [1] Enter to view details[-]")
+		return b.String()
+	}
+
+	if len(masters) == 0 && len(replicas) > 0 {
+		masters = append(masters, replicas[0])
+		replicas = replicas[1:]
+	}
+
+	displayNodes := a.topologyNodes()
+	for mi, master := range masters {
+		selectedIdx := -1
+		for i, n := range displayNodes {
+			if n.NodeID == a.topologySelectedNodeID {
+				selectedIdx = i
+				break
+			}
+		}
+		selected := mi == selectedIdx
+		marker := "●"
+		color := "[yellow]"
+		if selected {
+			color = "[green]"
+		}
+		fmt.Fprintf(&b, "\n %s%s%s [-][master][%d]\n", color, marker, master.Addr, mi+1)
+		if selected {
+			b.WriteString("  [dim]← selected[-]\n")
+		}
+
+		replicasOfMaster := make([]cluster.NodeState, 0)
+		for _, replica := range replicas {
+			if replica.MasterID == master.NodeID {
+				replicasOfMaster = append(replicasOfMaster, replica)
+			}
+		}
+
+		for ri, replica := range replicasOfMaster {
+			ridx := len(masters) + ri
+			selected := ridx == selectedIdx
+			color := "[yellow]"
+			if selected {
+				color = "[green]"
+			}
+
+			snapshot, _ := a.store.Replication(replica.NodeID)
+			state := "unknown"
+			lag := int64(-1)
+			if snapshot.NodeID != "" {
+				state = snapshot.MasterLinkStatus
+				lag = snapshot.MasterLastIOSecondsAgo
+			}
+
+			connector := "├── "
+			if ri == len(replicasOfMaster)-1 && mi == len(masters)-1 {
+				connector = "└── "
+			} else if ri == len(replicasOfMaster)-1 {
+				connector = "├── "
+			}
+			fmt.Fprintf(&b, "%s %s○[-] %s [replica][%d]\n", connector, color, replica.Addr, ridx+1)
+			if state != "" && state != "unknown" {
+				fmt.Fprintf(&b, "%s       state=%s lag=%ds\n", connector, state, lag)
+			}
+			if selected {
+				b.WriteString("       [dim]← selected[-]\n")
+			}
+		}
+	}
+
+	b.WriteString("\n[dim]Press [1-9] to select, Enter to view details[-]")
+	return b.String()
 }
 
 func (a *App) renderDashboard() string {
@@ -208,18 +516,19 @@ func (a *App) renderDashboard() string {
 		return "Connecting..."
 	}
 	var b strings.Builder
-	for _, node := range nodes {
+
+	processNode := func(node cluster.NodeState) {
 		snapshot, ok := a.store.Dashboard(node.NodeID)
 		fmt.Fprintf(&b, "[yellow]%s[-]\n", node.Addr)
 		if errMsg := a.engine.PanelError("dashboard", node.NodeID); errMsg != "" {
 			fmt.Fprintf(&b, "  [red]error[-]=%s\n\n", errMsg)
-			continue
+			return
 		}
 		if !ok {
 			b.WriteString("  waiting for dashboard snapshot...\n\n")
-			continue
+			return
 		}
-		fmt.Fprintf(&b, "  role=%s version=%s quality=%s collected=%s\n", snapshot.Role, snapshot.Version, snapshot.Quality, snapshot.CollectedAt.Format(time.RFC3339))
+		fmt.Fprintf(&b, "  role=%s version=%s uptime=%s quality=%s collected=%s\n", snapshot.Role, snapshot.Version, formatUptime(snapshot.Uptime), snapshot.Quality, snapshot.CollectedAt.Format(time.RFC3339))
 		fmt.Fprintf(&b, "  clients=%d ops/s=%d used_memory=%d rss=%d hit_rate=%.2f%%\n", snapshot.ConnectedClients, snapshot.InstantaneousOpsPerSec, snapshot.UsedMemory, snapshot.UsedMemoryRSS, snapshot.HitRate*100)
 		fmt.Fprintf(&b, "  expired=%d evicted=%d\n", snapshot.ExpiredKeys, snapshot.EvictedKeys)
 		if len(snapshot.Keyspace) > 0 {
@@ -233,6 +542,14 @@ func (a *App) renderDashboard() string {
 			}
 		}
 		b.WriteString("\n")
+	}
+
+	if a.nodeDrillDown && a.selectedNode >= 0 && a.selectedNode < len(nodes) {
+		processNode(nodes[a.selectedNode])
+	} else {
+		for _, node := range nodes {
+			processNode(node)
+		}
 	}
 	return b.String()
 }
@@ -254,7 +571,11 @@ func (a *App) renderReplication() string {
 			b.WriteString("  waiting for replication snapshot...\n\n")
 			continue
 		}
-		fmt.Fprintf(&b, "  role=%s master=%s link=%s last_io=%ds quality=%s\n", snapshot.Role, snapshot.MasterHost, snapshot.MasterLinkStatus, snapshot.MasterLastIOSecondsAgo, snapshot.Quality)
+		lastReconnected := "-"
+		if !snapshot.LastReconnectedAt.IsZero() {
+			lastReconnected = snapshot.LastReconnectedAt.Format(time.RFC3339)
+		}
+		fmt.Fprintf(&b, "  role=%s master=%s link=%s last_io=%ds last_reconnected=%s quality=%s\n", snapshot.Role, snapshot.MasterHost, snapshot.MasterLinkStatus, snapshot.MasterLastIOSecondsAgo, lastReconnected, snapshot.Quality)
 		fmt.Fprintf(&b, "  connected_slaves=%d repl_offset=%d\n", snapshot.ConnectedSlaves, snapshot.MasterReplOffset)
 		for _, replica := range snapshot.Replicas {
 			fmt.Fprintf(&b, "  replica=%s state=%s offset=%d lag=%d\n", replica.Addr, replica.State, replica.Offset, replica.Lag)

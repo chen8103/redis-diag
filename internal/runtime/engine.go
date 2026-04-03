@@ -71,6 +71,25 @@ func (e *Engine) Nodes() []cluster.NodeState {
 	return out
 }
 
+func (e *Engine) SetTarget(ctx context.Context, addr string) error {
+	if err := e.src.SetTarget(addr); err != nil {
+		return err
+	}
+	nodes, err := e.src.DiscoverNodes(ctx)
+	if err != nil {
+		return err
+	}
+	valid := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		valid[node.NodeID] = struct{}{}
+	}
+	e.store.PruneNodes(valid)
+	e.mu.Lock()
+	e.nodes = nodes
+	e.mu.Unlock()
+	return nil
+}
+
 func (e *Engine) spawnTicker(ctx context.Context, name string, interval time.Duration, collect func(context.Context, cluster.NodeState)) {
 	if interval <= 0 {
 		interval = time.Second
@@ -166,6 +185,11 @@ func (e *Engine) collectReplication(ctx context.Context, node cluster.NodeState)
 	snapshot, err := e.src.FetchReplication(ctx, source.NodeRef{NodeID: node.NodeID, Addr: node.Addr})
 	if err == nil {
 		e.setError("replication", node.NodeID, "")
+		if prev, ok := e.store.Replication(node.NodeID); ok {
+			if prev.MasterLinkDownSinceSeconds > 60 && snapshot.MasterLinkDownSinceSeconds < 10 {
+				snapshot.LastReconnectedAt = time.Now()
+			}
+		}
 		e.store.SetReplication(snapshot)
 		return
 	}
